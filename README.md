@@ -16,7 +16,7 @@ A mechatronics project demonstrating digital signal processing for servo control
 - Median filter
 - Exponential filter
 - Automatic filter selection (AUTO)
-- Logic Analyzer support (Wokwi)
+- Logic Analyzer support 
 
 ## Hardware
 
