@@ -1,0 +1,53 @@
+# Hardware Components
+
+| Component | Quantity |
+|-----------|----------|
+| ESP32 DevKit V1 | 1 |
+| SG90 Micro Servo | 1 |
+| SSD1306 OLED Display (128×64, I²C) | 1 |
+| 10 kΩ Potentiometer | 1 |
+| Push Button (6 mm) | 1 |
+| Logic Analyzer (Wokwi) | 1 |
+
+---
+
+# Pin Assignment
+
+| Component | Pin | ESP32 Connection |
+|-----------|-----|------------------|
+| Potentiometer | VCC | 3.3V |
+| Potentiometer | GND | GND |
+| Potentiometer | Signal | GPIO34 (ADC1_CH6) |
+| SG90 Servo | VCC | 5V |
+| SG90 Servo | GND | GND |
+| SG90 Servo | PWM Signal | GPIO18 |
+| OLED SSD1306 | VCC | 3.3V |
+| OLED SSD1306 | GND | GND |
+| OLED SSD1306 | SDA | GPIO21 |
+| OLED SSD1306 | SCL | GPIO22 |
+| Push Button | Pin 1 | GPIO19 |
+| Push Button | Pin 2 | GND |
+| Logic Analyzer | D0 | GPIO18 |
+| Logic Analyzer | GND | GND |
+
+---
+
+# GPIO Allocation
+
+| GPIO | Function |
+|------|----------|
+| GPIO18 | Servo PWM Output |
+| GPIO19 | Push Button Input |
+| GPIO21 | I²C SDA |
+| GPIO22 | I²C SCL |
+| GPIO34 | Analog Input (Potentiometer) |
+
+---
+
+# Power Distribution
+
+| Voltage | Connected Devices |
+|----------|-------------------|
+| 3.3V | Potentiometer, OLED Display |
+| 5V | SG90 Servo Motor |
+| GND | Potentiometer, Servo, OLED, Push Button, Logic Analyzer |
