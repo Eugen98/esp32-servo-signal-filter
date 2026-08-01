@@ -32,7 +32,7 @@ A mechatronics project demonstrating digital signal processing for servo control
 - ESP32Servo
 - Adafruit GFX
 - Adafruit SSD1306
-- Wokwi Simulator
+- Simulator
 
 ## Project Goal
 
