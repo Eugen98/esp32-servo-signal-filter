@@ -1,0 +1,455 @@
+#include <ESP32Servo.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// -------------------- Пины --------------------
+
+const int potPin = 34;
+const int servoPin = 18;
+const int buttonPin = 19;
+
+// -------------------- Servo --------------------
+
+Servo servo;
+
+// -------------------- OLED --------------------
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_ADDRESS 0x3C
+
+Adafruit_SSD1306 display(
+  SCREEN_WIDTH,
+  SCREEN_HEIGHT,
+  &Wire,
+  -1
+);
+
+// -------------------- Режимы --------------------
+
+enum FilterMode {
+  MODE_RAW,
+  MODE_AVG,
+  MODE_MEDIAN,
+  MODE_EXP,
+  MODE_AUTO
+};
+
+FilterMode currentMode = MODE_RAW;
+
+// Какой фильтр реально выбран внутри AUTO
+const char* autoActiveFilter = "RAW";
+
+// -------------------- Moving Average --------------------
+
+const int avgWindow = 10;
+int avgSamples[avgWindow];
+int avgIndex = 0;
+long avgSum = 0;
+
+// -------------------- Median --------------------
+
+const int medianWindow = 5;
+int medianSamples[medianWindow];
+int medianIndex = 0;
+
+// -------------------- Exponential --------------------
+
+const float alpha = 0.15;
+float expValue = 0;
+
+// -------------------- AUTO --------------------
+
+// Пороговые значения можно менять
+const int lowNoiseThreshold = 20;
+const int highNoiseThreshold = 100;
+
+// -------------------- Кнопка --------------------
+
+bool lastButtonReading = HIGH;
+bool stableButtonState = HIGH;
+
+unsigned long lastDebounceTime = 0;
+const unsigned long debounceDelay = 50;
+
+// -------------------- OLED/Serial timer --------------------
+
+unsigned long lastDisplayUpdate = 0;
+const unsigned long displayInterval = 100;
+
+// =====================================================
+// Название выбранного режима
+// =====================================================
+
+const char* getModeName() {
+  switch (currentMode) {
+    case MODE_RAW:
+      return "RAW";
+
+    case MODE_AVG:
+      return "AVG";
+
+    case MODE_MEDIAN:
+      return "MEDIAN";
+
+    case MODE_EXP:
+      return "EXP";
+
+    case MODE_AUTO:
+      return "AUTO";
+
+    default:
+      return "UNKNOWN";
+  }
+}
+
+// =====================================================
+// Переключение режима
+// =====================================================
+
+void nextMode() {
+  switch (currentMode) {
+    case MODE_RAW:
+      currentMode = MODE_AVG;
+      break;
+
+    case MODE_AVG:
+      currentMode = MODE_MEDIAN;
+      break;
+
+    case MODE_MEDIAN:
+      currentMode = MODE_EXP;
+      break;
+
+    case MODE_EXP:
+      currentMode = MODE_AUTO;
+      break;
+
+    case MODE_AUTO:
+      currentMode = MODE_RAW;
+      break;
+  }
+
+  Serial.print("MODE CHANGED: ");
+  Serial.println(getModeName());
+}
+
+// =====================================================
+// Кнопка с подавлением дребезга
+// =====================================================
+
+void updateButton() {
+  bool reading = digitalRead(buttonPin);
+
+  if (reading != lastButtonReading) {
+    lastDebounceTime = millis();
+  }
+
+  if (millis() - lastDebounceTime > debounceDelay) {
+    if (reading != stableButtonState) {
+      stableButtonState = reading;
+
+      if (stableButtonState == LOW) {
+        nextMode();
+      }
+    }
+  }
+
+  lastButtonReading = reading;
+}
+
+// =====================================================
+// Moving Average
+// =====================================================
+
+int movingAverageFilter(int rawValue) {
+  avgSum -= avgSamples[avgIndex];
+
+  avgSamples[avgIndex] = rawValue;
+  avgSum += rawValue;
+
+  avgIndex++;
+
+  if (avgIndex >= avgWindow) {
+    avgIndex = 0;
+  }
+
+  return avgSum / avgWindow;
+}
+
+// =====================================================
+// Median
+// =====================================================
+
+int medianFilter(int rawValue) {
+  medianSamples[medianIndex] = rawValue;
+
+  medianIndex++;
+
+  if (medianIndex >= medianWindow) {
+    medianIndex = 0;
+  }
+
+  int sorted[medianWindow];
+
+  for (int i = 0; i < medianWindow; i++) {
+    sorted[i] = medianSamples[i];
+  }
+
+  for (int i = 0; i < medianWindow - 1; i++) {
+    for (int j = 0; j < medianWindow - i - 1; j++) {
+      if (sorted[j] > sorted[j + 1]) {
+        int temp = sorted[j];
+        sorted[j] = sorted[j + 1];
+        sorted[j + 1] = temp;
+      }
+    }
+  }
+
+  return sorted[medianWindow / 2];
+}
+
+// =====================================================
+// Exponential
+// =====================================================
+
+int exponentialFilter(int rawValue) {
+  expValue =
+    alpha * rawValue +
+    (1.0 - alpha) * expValue;
+
+  return static_cast<int>(expValue);
+}
+
+// =====================================================
+// AUTO
+// =====================================================
+
+int autoFilter(
+  int rawValue,
+  int avgValue,
+  int medianValue
+) {
+  int noiseLevel = abs(rawValue - avgValue);
+
+  if (noiseLevel < lowNoiseThreshold) {
+    autoActiveFilter = "RAW";
+    return rawValue;
+  }
+
+  if (noiseLevel < highNoiseThreshold) {
+    autoActiveFilter = "AVG";
+    return avgValue;
+  }
+
+  autoActiveFilter = "MEDIAN";
+  return medianValue;
+}
+
+// =====================================================
+// Выбор выходного сигнала
+// =====================================================
+
+int selectOutput(
+  int rawValue,
+  int avgValue,
+  int medianValue,
+  int expFilteredValue
+) {
+  switch (currentMode) {
+    case MODE_RAW:
+      return rawValue;
+
+    case MODE_AVG:
+      return avgValue;
+
+    case MODE_MEDIAN:
+      return medianValue;
+
+    case MODE_EXP:
+      return expFilteredValue;
+
+    case MODE_AUTO:
+      return autoFilter(
+        rawValue,
+        avgValue,
+        medianValue
+      );
+
+    default:
+      return rawValue;
+  }
+}
+
+// =====================================================
+// OLED
+// =====================================================
+
+void updateDisplay(
+  int rawValue,
+  int filteredValue,
+  int angle,
+  int noiseLevel
+) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  display.setCursor(0, 0);
+  display.println("SERVO FILTER");
+
+  display.setCursor(0, 13);
+  display.print("RAW: ");
+  display.println(rawValue);
+
+  display.setCursor(0, 25);
+  display.print("OUT: ");
+  display.println(filteredValue);
+
+  display.setCursor(0, 37);
+  display.print("ANGLE: ");
+  display.print(angle);
+  display.println(" deg");
+
+  display.setCursor(0, 49);
+  display.print("MODE: ");
+  display.println(getModeName());
+
+  if (currentMode == MODE_AUTO) {
+    display.setCursor(70, 49);
+    display.print(autoActiveFilter);
+
+    display.setCursor(0, 57);
+    display.print("NOISE: ");
+    display.print(noiseLevel);
+  }
+
+  display.display();
+}
+
+// =====================================================
+// setup
+// =====================================================
+
+void setup() {
+  Serial.begin(115200);
+
+  analogReadResolution(12);
+
+  pinMode(buttonPin, INPUT_PULLUP);
+
+  servo.setPeriodHertz(50);
+  servo.attach(servoPin, 500, 2400);
+
+  Wire.begin(21, 22);
+
+  if (!display.begin(
+        SSD1306_SWITCHCAPVCC,
+        OLED_ADDRESS
+      )) {
+    Serial.println("OLED ERROR");
+
+    while (true) {
+      delay(1000);
+    }
+  }
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Starting...");
+  display.display();
+
+  int initialValue = analogRead(potPin);
+
+  expValue = initialValue;
+
+  for (int i = 0; i < avgWindow; i++) {
+    avgSamples[i] = initialValue;
+    avgSum += initialValue;
+  }
+
+  for (int i = 0; i < medianWindow; i++) {
+    medianSamples[i] = initialValue;
+  }
+
+  delay(500);
+}
+
+// =====================================================
+// loop
+// =====================================================
+
+void loop() {
+  updateButton();
+
+  int rawValue = analogRead(potPin);
+
+  int avgValue = movingAverageFilter(rawValue);
+  int medianValue = medianFilter(rawValue);
+  int expFilteredValue = exponentialFilter(rawValue);
+
+  int noiseLevel = abs(rawValue - avgValue);
+
+  int filteredValue = selectOutput(
+    rawValue,
+    avgValue,
+    medianValue,
+    expFilteredValue
+  );
+
+  int angle = map(
+    filteredValue,
+    0,
+    4095,
+    0,
+    180
+  );
+
+  angle = constrain(angle, 0, 180);
+
+  servo.write(angle);
+
+  if (millis() - lastDisplayUpdate >= displayInterval) {
+    lastDisplayUpdate = millis();
+
+    Serial.print("RAW:");
+    Serial.print(rawValue);
+
+    Serial.print(" AVG:");
+    Serial.print(avgValue);
+
+    Serial.print(" MEDIAN:");
+    Serial.print(medianValue);
+
+    Serial.print(" EXP:");
+    Serial.print(expFilteredValue);
+
+    Serial.print(" OUT:");
+    Serial.print(filteredValue);
+
+    Serial.print(" NOISE:");
+    Serial.print(noiseLevel);
+
+    Serial.print(" MODE:");
+    Serial.print(getModeName());
+
+    if (currentMode == MODE_AUTO) {
+      Serial.print(" ACTIVE:");
+      Serial.print(autoActiveFilter);
+    }
+
+    Serial.println();
+
+    updateDisplay(
+      rawValue,
+      filteredValue,
+      angle,
+      noiseLevel
+    );
+  }
+
+  delay(10);
+}
